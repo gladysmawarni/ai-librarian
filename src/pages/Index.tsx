@@ -40,14 +40,21 @@ const Index = () => {
     const savedApiKey = localStorage.getItem('openai_api_key');
     if (savedApiKey) {
       setApiKey(savedApiKey);
-      setOpenaiService(new OpenAIService(savedApiKey));
+      const initializeService = async () => {
+        const service = new OpenAIService();
+        await service.setApiKey(savedApiKey);
+        setOpenaiService(service);
+      };
+      initializeService();
     }
   }, []);
 
-  const handleApiKeySet = (key: string) => {
+  const handleApiKeySet = async (key: string) => {
     setApiKey(key);
     localStorage.setItem('openai_api_key', key);
-    setOpenaiService(new OpenAIService(key));
+    const service = new OpenAIService();
+    await service.setApiKey(key);
+    setOpenaiService(service);
   };
 
   const handleFilesChange = async (files: UploadedFile[]) => {

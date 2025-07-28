@@ -3,6 +3,7 @@ import OpenAI from 'openai';
 import * as pdfjsLib from 'pdfjs-dist/webpack';
 import mammoth from 'mammoth';
 import PizZip from 'pizzip';
+import { VectorStoreService } from './vectorStore';
 
 interface UploadedFile {
   id: string;
@@ -16,21 +17,25 @@ export class OpenAIService {
   private client: OpenAI | null = null;
   private fileContents: Array<{name: string, content: string}> = [];
   private systemInstructions: string = '';
+  private vectorStore: VectorStoreService;
 
   constructor(apiKey?: string) {
+    this.vectorStore = new VectorStoreService();
     if (apiKey) {
       this.client = new OpenAI({
         apiKey,
         dangerouslyAllowBrowser: true
       });
+      this.vectorStore.initialize(apiKey);
     }
   }
 
-  setApiKey(apiKey: string) {
+  async setApiKey(apiKey: string) {
     this.client = new OpenAI({
       apiKey,
       dangerouslyAllowBrowser: true
     });
+    await this.vectorStore.initialize(apiKey);
   }
 
   private async extractPdfText(file: File): Promise<string> {
@@ -129,6 +134,12 @@ export class OpenAIService {
       const extractedFiles = await Promise.all(fileReadPromises);
       this.fileContents.push(...extractedFiles);
       
+      // Add documents to vector store for semantic search
+      if (this.vectorStore.isInitialized()) {
+        await this.vectorStore.addDocuments(extractedFiles);
+        console.log('Documents added to vector store for semantic search');
+      }
+      
       console.log('Files processed:', this.fileContents.map(f => ({ name: f.name, contentLength: f.content.length })));
     } catch (error) {
       console.error('Error reading files:', error);
@@ -151,15 +162,31 @@ export class OpenAIService {
     }
 
     try {
-      const context = this.fileContents
-        .map(file => `=== ${file.name} ===\n${file.content}`)
-        .join('\n\n---\n\n');
+      let context = '';
       
-      console.log('Sending context to OpenAI:', { 
-        fileCount: this.fileContents.length, 
-        contextLength: context.length,
-        files: this.fileContents.map(f => ({ name: f.name, length: f.content.length }))
-      });
+      if (this.vectorStore.isInitialized()) {
+        // Use semantic search to find relevant chunks
+        const relevantChunks = await this.vectorStore.searchSimilar(message, 6);
+        context = relevantChunks
+          .map(chunk => `=== ${chunk.metadata.fileName} (chunk ${chunk.metadata.chunkIndex + 1}/${chunk.metadata.totalChunks}) ===\n${chunk.content}`)
+          .join('\n\n---\n\n');
+        
+        console.log('Using semantic search:', { 
+          query: message,
+          relevantChunks: relevantChunks.length,
+          contextLength: context.length
+        });
+      } else {
+        // Fallback to full documents
+        context = this.fileContents
+          .map(file => `=== ${file.name} ===\n${file.content}`)
+          .join('\n\n---\n\n');
+        
+        console.log('Using full documents:', { 
+          fileCount: this.fileContents.length, 
+          contextLength: context.length
+        });
+      }
       
       const response = await this.client.chat.completions.create({
         model: 'gpt-4.1-2025-04-14',
@@ -168,11 +195,11 @@ export class OpenAIService {
             role: 'system',
             content: `${this.systemInstructions}
 
-Here are the uploaded documents for reference:
+Here are the relevant document sections for answering the user's question:
 
 ${context}
 
-Please answer questions based on this content.`
+Please answer the question based on this content. If the information is not available in the provided context, say so clearly.`
           },
           {
             role: 'user',
@@ -204,6 +231,7 @@ Please answer questions based on this content.`
 
   clearFiles(): void {
     this.fileContents = [];
+    this.vectorStore.clear();
   }
 
   getFileContents(): Array<{name: string, content: string}> {
