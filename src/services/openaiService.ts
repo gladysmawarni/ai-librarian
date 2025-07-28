@@ -1,4 +1,8 @@
 import OpenAI from 'openai';
+// @ts-ignore
+import * as pdfjsLib from 'pdfjs-dist/webpack';
+import mammoth from 'mammoth';
+import PizZip from 'pizzip';
 
 interface UploadedFile {
   id: string;
@@ -10,7 +14,7 @@ interface UploadedFile {
 
 export class OpenAIService {
   private client: OpenAI | null = null;
-  private fileContents: string[] = [];
+  private fileContents: Array<{name: string, content: string}> = [];
   private systemInstructions: string = '';
 
   constructor(apiKey?: string) {
@@ -29,29 +33,103 @@ export class OpenAIService {
     });
   }
 
+  private async extractPdfText(file: File): Promise<string> {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const pdf = await pdfjsLib.getDocument(arrayBuffer).promise;
+      let fullText = '';
+
+      for (let i = 1; i <= pdf.numPages; i++) {
+        const page = await pdf.getPage(i);
+        const textContent = await page.getTextContent();
+        const pageText = textContent.items
+          .map((item: any) => item.str)
+          .join(' ');
+        fullText += pageText + '\n';
+      }
+
+      return fullText;
+    } catch (error) {
+      console.error('Error extracting PDF text:', error);
+      return `Error extracting content from PDF: ${file.name}`;
+    }
+  }
+
+  private async extractDocxText(file: File): Promise<string> {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const result = await mammoth.extractRawText({ arrayBuffer });
+      return result.value;
+    } catch (error) {
+      console.error('Error extracting DOCX text:', error);
+      return `Error extracting content from DOCX: ${file.name}`;
+    }
+  }
+
+  private async extractPptxText(file: File): Promise<string> {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const zip = new PizZip(arrayBuffer);
+      let fullText = '';
+
+      // Extract text from slides
+      const slideFiles = Object.keys(zip.files).filter(name => 
+        name.startsWith('ppt/slides/slide') && name.endsWith('.xml')
+      );
+
+      for (const slideFile of slideFiles) {
+        const content = zip.files[slideFile].asText();
+        // Simple regex to extract text content from XML
+        const textMatches = content.match(/<a:t[^>]*>([^<]*)<\/a:t>/g);
+        if (textMatches) {
+          const slideText = textMatches
+            .map(match => match.replace(/<[^>]*>/g, ''))
+            .join(' ');
+          fullText += slideText + '\n';
+        }
+      }
+
+      return fullText || `Unable to extract readable text from: ${file.name}`;
+    } catch (error) {
+      console.error('Error extracting PPTX text:', error);
+      return `Error extracting content from PPTX: ${file.name}`;
+    }
+  }
+
   async uploadFiles(files: UploadedFile[]): Promise<void> {
     if (!this.client) throw new Error('OpenAI client not initialized');
 
     try {
-      // For this demo, we'll read file contents directly
-      // In a production app, you'd want to process these server-side
       const fileReadPromises = files.map(async (file) => {
-        if (file.file.type === 'text/plain' || file.file.name.endsWith('.py')) {
-          return new Promise<string>((resolve, reject) => {
+        let content = '';
+        
+        if (file.file.type === 'application/pdf') {
+          content = await this.extractPdfText(file.file);
+        } else if (file.file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+          content = await this.extractDocxText(file.file);
+        } else if (file.file.type === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
+          content = await this.extractPptxText(file.file);
+        } else if (file.file.type === 'text/plain' || file.file.name.endsWith('.py')) {
+          content = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
             reader.onload = (e) => resolve(e.target?.result as string || '');
             reader.onerror = () => reject(new Error('Failed to read file'));
             reader.readAsText(file.file);
           });
         } else {
-          // For other file types, we'll use a placeholder
-          // In production, you'd extract text using server-side tools
-          return `[File: ${file.name} - Content extraction would require server-side processing]`;
+          content = `Unsupported file type: ${file.name}`;
         }
+
+        return {
+          name: file.name,
+          content: content
+        };
       });
 
-      const contents = await Promise.all(fileReadPromises);
-      this.fileContents.push(...contents);
+      const extractedFiles = await Promise.all(fileReadPromises);
+      this.fileContents.push(...extractedFiles);
+      
+      console.log('Files processed:', this.fileContents.map(f => ({ name: f.name, contentLength: f.content.length })));
     } catch (error) {
       console.error('Error reading files:', error);
       throw error;
@@ -73,7 +151,15 @@ export class OpenAIService {
     }
 
     try {
-      const context = this.fileContents.join('\n\n---\n\n');
+      const context = this.fileContents
+        .map(file => `=== ${file.name} ===\n${file.content}`)
+        .join('\n\n---\n\n');
+      
+      console.log('Sending context to OpenAI:', { 
+        fileCount: this.fileContents.length, 
+        contextLength: context.length,
+        files: this.fileContents.map(f => ({ name: f.name, length: f.content.length }))
+      });
       
       const response = await this.client.chat.completions.create({
         model: 'gpt-4',
@@ -114,5 +200,13 @@ Please answer questions based on this content.`
 
   hasFiles(): boolean {
     return this.fileContents.length > 0;
+  }
+
+  clearFiles(): void {
+    this.fileContents = [];
+  }
+
+  getFileContents(): Array<{name: string, content: string}> {
+    return this.fileContents;
   }
 }

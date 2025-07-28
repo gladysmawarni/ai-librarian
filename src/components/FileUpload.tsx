@@ -45,7 +45,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, uploadedFiles })
       
       toast({
         title: "Files uploaded successfully",
-        description: `${acceptedFiles.length} file(s) ready for processing`,
+        description: `${acceptedFiles.length} file(s) ready for processing. AI is extracting content...`,
       });
     } catch (error) {
       toast({

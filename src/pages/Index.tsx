@@ -56,19 +56,24 @@ const Index = () => {
     if (files.length > 0 && openaiService) {
       setIsLoading(true);
       try {
+        // Clear previous files
+        openaiService.clearFiles();
+        
+        // Process new files
         await openaiService.uploadFiles(files);
         await openaiService.createAssistant(systemInstructions);
         
         toast({
           title: "Files processed successfully",
-          description: "Your documents are now ready for analysis. You can start chatting!",
+          description: "Your documents have been analyzed and are ready for questions!",
         });
         
         setActiveTab('chat');
       } catch (error) {
+        console.error('Error processing files:', error);
         toast({
           title: "Error processing files",
-          description: "Failed to upload and process files. Please try again.",
+          description: "Failed to extract content from files. Please try again.",
           variant: "destructive",
         });
       } finally {
