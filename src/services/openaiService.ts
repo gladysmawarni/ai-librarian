@@ -162,7 +162,7 @@ export class OpenAIService {
       });
       
       const response = await this.client.chat.completions.create({
-        model: 'gpt-4',
+        model: 'gpt-4.1-2025-04-14',
         messages: [
           {
             role: 'system',
@@ -179,7 +179,7 @@ Please answer questions based on this content.`
             content: message
           }
         ],
-        max_tokens: 1500,
+        max_tokens: 800,
         temperature: 0.7,
       });
 
