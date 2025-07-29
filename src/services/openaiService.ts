@@ -1,5 +1,5 @@
 import OpenAI from 'openai';
-import * as pdfjsLib from 'pdfjs-dist';
+import { pdfToImg } from 'pdftoimg-js/browser';
 import mammoth from 'mammoth';
 import PizZip from 'pizzip';
 import { VectorStoreService } from './vectorStore';
@@ -39,33 +39,28 @@ export class OpenAIService {
 
   private async extractPdfText(file: File): Promise<string> {
     try {
-      const arrayBuffer = await file.arrayBuffer();
-      const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+      // Convert PDF to images using pdftoimg-js browser version
+      const images = await pdfToImg(URL.createObjectURL(file), {
+        imgType: 'png',
+        scale: 1.5,
+        maxWidth: 1000,
+        maxHeight: 1000,
+        pages: 'all'
+      });
+
+      // Ensure images is always an array
+      const imageArray = Array.isArray(images) ? images : [images];
+      
+      if (!imageArray || imageArray.length === 0) {
+        return `No pages found in PDF: ${file.name}`;
+      }
+
       let fullText = '';
-
-      // Convert each page to image and extract text using vision
-      for (let i = 1; i <= Math.min(pdf.numPages, 10); i++) { // Limit to 10 pages for API cost
-        const page = await pdf.getPage(i);
-        const viewport = page.getViewport({ scale: 2.0 });
-        
-        // Create canvas to render page
-        const canvas = document.createElement('canvas');
-        const context = canvas.getContext('2d');
-        canvas.height = viewport.height;
-        canvas.width = viewport.width;
-
-        if (!context) continue;
-
-        // Render page to canvas
-        await page.render({
-          canvasContext: context,
-          viewport: viewport
-        }).promise;
-
-        // Convert canvas to base64 image
-        const imageData = canvas.toDataURL('image/png');
-        
-        // Use OpenAI vision to extract text
+      
+      // Limit to first 10 pages for API cost control
+      const pagesToProcess = Math.min(imageArray.length, 10);
+      
+      for (let i = 0; i < pagesToProcess; i++) {
         if (this.client) {
           const response = await this.client.chat.completions.create({
             model: 'gpt-4.1-2025-04-14',
@@ -80,7 +75,7 @@ export class OpenAIService {
                   {
                     type: 'image_url',
                     image_url: {
-                      url: imageData
+                      url: imageArray[i]
                     }
                   }
                 ]
@@ -90,7 +85,7 @@ export class OpenAIService {
           });
           
           const pageText = response.choices[0]?.message?.content || '';
-          fullText += `--- Page ${i} ---\n${pageText}\n\n`;
+          fullText += `--- Page ${i + 1} ---\n${pageText}\n\n`;
         }
       }
 
