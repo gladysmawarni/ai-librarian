@@ -43,16 +43,58 @@ export class OpenAIService {
       const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
       let fullText = '';
 
-      for (let i = 1; i <= pdf.numPages; i++) {
+      // Convert each page to image and extract text using vision
+      for (let i = 1; i <= Math.min(pdf.numPages, 10); i++) { // Limit to 10 pages for API cost
         const page = await pdf.getPage(i);
-        const textContent = await page.getTextContent();
-        const pageText = textContent.items
-          .map((item: any) => item.str)
-          .join(' ');
-        fullText += pageText + '\n';
+        const viewport = page.getViewport({ scale: 2.0 });
+        
+        // Create canvas to render page
+        const canvas = document.createElement('canvas');
+        const context = canvas.getContext('2d');
+        canvas.height = viewport.height;
+        canvas.width = viewport.width;
+
+        if (!context) continue;
+
+        // Render page to canvas
+        await page.render({
+          canvasContext: context,
+          viewport: viewport
+        }).promise;
+
+        // Convert canvas to base64 image
+        const imageData = canvas.toDataURL('image/png');
+        
+        // Use OpenAI vision to extract text
+        if (this.client) {
+          const response = await this.client.chat.completions.create({
+            model: 'gpt-4.1-2025-04-14',
+            messages: [
+              {
+                role: 'user',
+                content: [
+                  {
+                    type: 'text',
+                    text: 'Extract all text from this image. Return only the text content without any additional formatting or explanations.'
+                  },
+                  {
+                    type: 'image_url',
+                    image_url: {
+                      url: imageData
+                    }
+                  }
+                ]
+              }
+            ],
+            max_tokens: 1000
+          });
+          
+          const pageText = response.choices[0]?.message?.content || '';
+          fullText += `--- Page ${i} ---\n${pageText}\n\n`;
+        }
       }
 
-      return fullText || `No text content found in PDF: ${file.name}`;
+      return fullText || `No text content extracted from PDF: ${file.name}`;
     } catch (error) {
       console.error('Error extracting PDF text:', error);
       return `Error extracting content from PDF: ${file.name}`;
