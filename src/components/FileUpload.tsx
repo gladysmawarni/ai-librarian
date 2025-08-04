@@ -26,6 +26,8 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, uploadedFiles })
     'application/pdf': ['.pdf'],
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
     'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx'],
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+    'application/vnd.ms-excel': ['.xls'],
     'text/x-python': ['.py'],
     'text/plain': ['.txt'],
   };
@@ -115,7 +117,7 @@ const FileUpload: React.FC<FileUploadProps> = ({ onFilesChange, uploadedFiles })
               </p>
               <div className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
                 <AlertCircle className="w-4 h-4" />
-                Supports PDF, DOCX, PPTX, PY files (max 10MB)
+                Supports PDF, DOCX, PPTX, Excel, PY files (max 10MB)
               </div>
             </div>
 

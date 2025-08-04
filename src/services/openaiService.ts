@@ -2,6 +2,7 @@ import OpenAI from 'openai';
 import { pdfToImg } from 'pdftoimg-js/browser';
 import mammoth from 'mammoth';
 import PizZip from 'pizzip';
+import * as XLSX from 'xlsx';
 import { VectorStoreService } from './vectorStore';
 
 interface UploadedFile {
@@ -137,6 +138,37 @@ export class OpenAIService {
     }
   }
 
+  private async extractExcelText(file: File): Promise<string> {
+    try {
+      const arrayBuffer = await file.arrayBuffer();
+      const workbook = XLSX.read(arrayBuffer, { type: 'array' });
+      let fullText = '';
+
+      // Process each worksheet
+      workbook.SheetNames.forEach((sheetName, index) => {
+        const worksheet = workbook.Sheets[sheetName];
+        const jsonData = XLSX.utils.sheet_to_json(worksheet, { header: 1, defval: '' });
+        
+        fullText += `=== Sheet: ${sheetName} ===\n`;
+        
+        // Convert rows to text
+        jsonData.forEach((row: any[], rowIndex) => {
+          const rowText = row.filter(cell => cell !== '').join(' | ');
+          if (rowText.trim()) {
+            fullText += `Row ${rowIndex + 1}: ${rowText}\n`;
+          }
+        });
+        
+        fullText += '\n';
+      });
+
+      return fullText || `Unable to extract readable content from: ${file.name}`;
+    } catch (error) {
+      console.error('Error extracting Excel text:', error);
+      return `Error extracting content from Excel: ${file.name}`;
+    }
+  }
+
   async uploadFiles(files: UploadedFile[]): Promise<void> {
     if (!this.client) throw new Error('OpenAI client not initialized');
 
@@ -150,6 +182,8 @@ export class OpenAIService {
           content = await this.extractDocxText(file.file);
         } else if (file.file.type === 'application/vnd.openxmlformats-officedocument.presentationml.presentation') {
           content = await this.extractPptxText(file.file);
+        } else if (file.file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' || file.file.type === 'application/vnd.ms-excel') {
+          content = await this.extractExcelText(file.file);
         } else if (file.file.type === 'text/plain' || file.file.name.endsWith('.py')) {
           content = await new Promise<string>((resolve, reject) => {
             const reader = new FileReader();
